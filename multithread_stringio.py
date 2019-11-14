@@ -1,14 +1,16 @@
 import csv
 import os
+import threading
 import time
+from multiprocessing import Queue
 
 import psutil as psutil
 import psycopg2
 import json
 import random
 from io import StringIO
-from multiprocessing import Process, Queue, cpu_count
 import queue # imported for using queue.Empty exception
+
 
 def mem_report():
     p = psutil.Process(os.getpid())
@@ -27,7 +29,9 @@ def mem_report():
 with open('words.txt', 'r') as f1:
     words = tuple(json.load(f1).keys())
 
+
 def load_words_into_postgres():
+    start = time.time()
     n = 0
     try:
         connection = psycopg2.connect(user="postgres",
@@ -46,15 +50,16 @@ def load_words_into_postgres():
         f.seek(0)
         cursor.copy_from(f, "multi_words", "\t", columns=("word",))
         connection.commit()
+        time.sleep(.5)
     except (Exception, psycopg2.Error) as error:
         if (connection):
             print("Failed to insert record into word table", error)
     finally:
         # closing database connection.
-        if(connection):
+        print(f"processed: {n} words, time: {int(time.time() - start)}, {mem_report()}")
+        if (connection):
             cursor.close()
             connection.close()
-
 
 def do_job(tasks_to_accomplish, tasks_that_are_done):
     while True:
@@ -83,24 +88,23 @@ def do_job(tasks_to_accomplish, tasks_that_are_done):
 
 def main():
     number_of_task = 10
-    number_of_processes = cpu_count() - 1
     tasks_to_accomplish = Queue()
     tasks_that_are_done = Queue()
-    processes = []
+    threads = []
 
     for i in range(number_of_task):
         tasks_to_accomplish.put(load_words_into_postgres)
 
     # creating processes
-    for w in range(number_of_processes):
-        p = Process(target=do_job, args=(tasks_to_accomplish, tasks_that_are_done))
-        processes.append(p)
-        p.start()
+    for i in range(number_of_task):
+        thread = threading.Thread(target=do_job, name=f"thread-{i}", args=(tasks_to_accomplish, tasks_that_are_done))
+        thread.start()
+        threads.append(thread)
 
     # completing process
-    for p in processes:
+    for t in threads:
         print('completed')
-        p.join()
+        t.join()
 
     # print the output
     while not tasks_that_are_done.empty():
@@ -111,3 +115,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
